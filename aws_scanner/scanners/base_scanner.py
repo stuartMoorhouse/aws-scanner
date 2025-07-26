@@ -2,24 +2,14 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 import time
 import logging
 
-from ..types import Resource
+from ..types import Resource, RegionScanResult
 from ..config import get_config
 from ..utils import handle_aws_error, RateLimiter
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ScanResult:
-    """Result of scanning a single region."""
-    region: str
-    resources: List[Resource]
-    error: Optional[Exception] = None
-    duration: float = 0.0
 
 
 class BaseScanner(ABC):
@@ -135,14 +125,14 @@ class BaseScanner(ABC):
             # Scan the region
             resources = self.scan_single_region(region)
             
-            return ScanResult(
+            return RegionScanResult(
                 region=region,
                 resources=resources,
                 duration=time.time() - start_time
             )
             
         except Exception as e:
-            return ScanResult(
+            return RegionScanResult(
                 region=region,
                 resources=[],
                 error=e,

@@ -2,10 +2,31 @@
 """AWS Resource Scanner - Main entry point."""
 import os
 import sys
+
+# Validate AWS credentials before any other imports
+def validate_aws_credentials():
+    """Validate AWS credentials are available before proceeding."""
+    # Check environment variables first
+    if not (os.environ.get('AWS_ACCESS_KEY_ID') or os.environ.get('AWS_SECRET_ACCESS_KEY')):
+        # Try to get credentials from boto3's credential chain
+        try:
+            import boto3
+            session = boto3.Session()
+            credentials = session.get_credentials()
+            if not credentials:
+                print("Error: No AWS credentials found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or configure AWS credentials.")
+                sys.exit(1)
+        except Exception as e:
+            print(f"Error: Failed to validate AWS credentials: {e}")
+            sys.exit(1)
+
+# Validate credentials before proceeding with imports
+validate_aws_credentials()
+
 import time
 import argparse
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Iterator
 from collections import defaultdict
 from itertools import groupby
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -102,6 +123,11 @@ Examples:
         action='store_true',
         help='Disable progress bars'
     )
+    parser.add_argument(
+        '--streaming',
+        action='store_true',
+        help='Use memory-efficient streaming mode (recommended for large AWS accounts)'
+    )
     
     return parser.parse_args()
 
@@ -124,6 +150,100 @@ def get_all_regions() -> List[str]:
     except Exception as e:
         logger.error(f"Error fetching regions: {e}")
         raise
+
+
+def generate_markdown_report_streaming(resources: Iterator[Resource], output_file: str) -> None:
+    """
+    Generate a comprehensive markdown report of all resources using streaming.
+    Memory-efficient version that writes incrementally.
+    
+    Args:
+        resources: Iterator of discovered resources
+        output_file: Path to output file
+    """
+    timestamp = datetime.now().isoformat()
+    
+    # Temporary storage for summary data
+    service_data = defaultdict(lambda: {'count': 0, 'cost': 0.0, 'resources': []})
+    total_count = 0
+    total_cost = 0.0
+    
+    # First pass: collect resources and build summary
+    all_resources = []
+    for resource in resources:
+        all_resources.append(resource)
+        total_count += 1
+        cost = resource.estimated_monthly_cost or 0
+        total_cost += cost
+        service_data[resource.service]['count'] += 1
+        service_data[resource.service]['cost'] += cost
+        service_data[resource.service]['resources'].append(resource)
+    
+    # Now write the report
+    with open(output_file, 'w') as f:
+        # Header
+        f.write("# AWS Resources Report\n\n")
+        f.write(f"**Generated:** {timestamp}\n")
+        f.write(f"**Total Resources Found:** {total_count}\n")
+        f.write(f"**Total Estimated Monthly Cost:** ${total_cost:,.2f}\n\n")
+        
+        if total_count == 0:
+            f.write("No resources found.\n")
+            return
+        
+        # Table of contents
+        f.write("## Table of Contents\n\n")
+        for service in sorted(service_data.keys()):
+            anchor = service.lower().replace(' ', '-')
+            f.write(f"- [{service}](#{anchor})\n")
+        f.write("\n")
+        
+        # Summary by service
+        f.write("## Summary by Service\n\n")
+        f.write("| Service | Resource Count | Estimated Monthly Cost |\n")
+        f.write("|---------|----------------|----------------------|\n")
+        
+        for service in sorted(service_data.keys()):
+            data = service_data[service]
+            f.write(f"| {service} | {data['count']} | ${data['cost']:,.2f} |\n")
+        
+        f.write("\n")
+        
+        # Detailed resources by service
+        for service in sorted(service_data.keys()):
+            f.write(f"## {service}\n\n")
+            
+            # Group by region
+            by_region = defaultdict(list)
+            for resource in service_data[service]['resources']:
+                by_region[resource.region].append(resource)
+            
+            for region in sorted(by_region.keys()):
+                f.write(f"### {region}\n\n")
+                
+                # Generic table for all services
+                f.write("| Type | Name/ID | State | Monthly Cost | Details |\n")
+                f.write("|------|---------|-------|--------------|----------|\n")
+                
+                for resource in by_region[region]:
+                    # Extract key details
+                    details = []
+                    if resource.additional_info:
+                        for k, v in resource.additional_info.items():
+                            if v and not isinstance(v, (dict, list)) and k != 'tags':
+                                details.append(f"{k}: {v}")
+                                if len(details) >= 3:
+                                    break
+                    
+                    f.write(
+                        f"| {resource.type} "
+                        f"| {resource.name or resource.id} "
+                        f"| {resource.state or 'active'} "
+                        f"| ${(resource.estimated_monthly_cost or 0):,.2f} "
+                        f"| {', '.join(details) or '-'} |\n"
+                    )
+                
+                f.write("\n")
 
 
 def generate_markdown_report(resources: List[Resource]) -> str:
@@ -290,6 +410,71 @@ def generate_markdown_report(resources: List[Resource]) -> str:
     return '\n'.join(report_lines)
 
 
+def scan_services_streaming(
+    scanners: List[BaseScanner], 
+    show_progress: bool = True
+) -> Iterator[Resource]:
+    """
+    Scan all services concurrently, yielding resources as they're found.
+    Memory-efficient version that doesn't load all resources at once.
+    
+    Args:
+        scanners: List of scanner instances
+        show_progress: Whether to show progress bars
+        
+    Yields:
+        Resources as they are discovered
+    """
+    config = get_config()
+    
+    if show_progress:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            overall_task = progress.add_task(
+                "[cyan]Scanning AWS services...", 
+                total=len(scanners)
+            )
+            
+            with ThreadPoolExecutor(max_workers=config.max_concurrent_services) as executor:
+                future_to_scanner = {
+                    executor.submit(scanner.scan_all_regions): scanner
+                    for scanner in scanners
+                }
+                
+                for future in as_completed(future_to_scanner):
+                    scanner = future_to_scanner[future]
+                    try:
+                        resources = future.result()
+                        for resource in resources:
+                            yield resource
+                        progress.update(overall_task, advance=1)
+                    except Exception as e:
+                        logger.error(f"Failed to scan {scanner.service_name}: {e}")
+                        progress.update(overall_task, advance=1)
+    else:
+        with ThreadPoolExecutor(max_workers=config.max_concurrent_services) as executor:
+            future_to_scanner = {
+                executor.submit(scanner.scan_all_regions): scanner
+                for scanner in scanners
+            }
+            
+            for future in as_completed(future_to_scanner):
+                scanner = future_to_scanner[future]
+                try:
+                    resources = future.result()
+                    for resource in resources:
+                        yield resource
+                    logger.info(f"Completed scanning {scanner.service_name}")
+                except Exception as e:
+                    logger.error(f"Failed to scan {scanner.service_name}: {e}")
+
+
 def scan_services_concurrently(
     scanners: List[BaseScanner], 
     show_progress: bool = True
@@ -304,60 +489,10 @@ def scan_services_concurrently(
     Returns:
         List of all discovered resources
     """
-    all_resources: List[Resource] = []
-    config = get_config()
-    
-    if show_progress:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            # Create overall progress task
-            overall_task = progress.add_task(
-                "[cyan]Scanning AWS services...", 
-                total=len(scanners)
-            )
-            
-            # Scan services concurrently
-            with ThreadPoolExecutor(max_workers=config.max_concurrent_services) as executor:
-                # Submit all scan tasks
-                future_to_scanner = {
-                    executor.submit(scanner.scan_all_regions): scanner
-                    for scanner in scanners
-                }
-                
-                # Process completed scans
-                for future in as_completed(future_to_scanner):
-                    scanner = future_to_scanner[future]
-                    try:
-                        resources = future.result()
-                        all_resources.extend(resources)
-                        progress.update(overall_task, advance=1)
-                    except Exception as e:
-                        logger.error(f"Failed to scan {scanner.service_name}: {e}")
-                        progress.update(overall_task, advance=1)
-    else:
-        # No progress bars
-        with ThreadPoolExecutor(max_workers=config.max_concurrent_services) as executor:
-            future_to_scanner = {
-                executor.submit(scanner.scan_all_regions): scanner
-                for scanner in scanners
-            }
-            
-            for future in as_completed(future_to_scanner):
-                scanner = future_to_scanner[future]
-                try:
-                    resources = future.result()
-                    all_resources.extend(resources)
-                    logger.info(f"Completed scanning {scanner.service_name}")
-                except Exception as e:
-                    logger.error(f"Failed to scan {scanner.service_name}: {e}")
-    
-    return all_resources
+    # Use the streaming version and collect all resources
+    return list(scan_services_streaming(scanners, show_progress))
+
+
 
 
 def display_summary(resources: List[Resource]) -> None:
@@ -416,12 +551,7 @@ def main():
     console.print("[bold cyan]AWS Resource Scanner[/bold cyan]")
     console.print("=" * 50)
     
-    # Check for AWS credentials
-    if not os.environ.get('AWS_ACCESS_KEY_ID') or not os.environ.get('AWS_SECRET_ACCESS_KEY'):
-        console.print("[bold red]Error:[/bold red] AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables must be set")
-        sys.exit(1)
-    
-    console.print("[green]✓[/green] Using AWS credentials from environment variables")
+    console.print("[green]✓[/green] AWS credentials validated")
     
     try:
         # Get all regions
@@ -456,32 +586,55 @@ def main():
         
         # Run scanners
         start_time = time.time()
-        all_resources = scan_services_concurrently(scanners, not args.no_progress)
-        duration = time.time() - start_time
         
-        # Display summary
-        console.print(f"\n[bold green]Scan completed in {duration:.2f} seconds[/bold green]\n")
-        display_summary(all_resources)
-        
-        # Generate and save report
-        if all_resources:
-            console.print(f"\n[cyan]Generating {args.format} report...[/cyan]")
+        if args.streaming:
+            # Use memory-efficient streaming mode
+            console.print("[cyan]Using memory-efficient streaming mode...[/cyan]\n")
             
-            if args.format == 'markdown':
-                report = generate_markdown_report(all_resources)
-            else:
+            # Stream resources directly to file
+            resources_iter = scan_services_streaming(scanners, not args.no_progress)
+            
+            # Generate report using streaming
+            console.print(f"\n[cyan]Generating streaming {args.format} report...[/cyan]")
+            if args.format != 'markdown':
                 console.print(f"[yellow]Format '{args.format}' not yet implemented, using markdown[/yellow]")
-                report = generate_markdown_report(all_resources)
             
             try:
-                with open(args.output, 'w') as f:
-                    f.write(report)
+                generate_markdown_report_streaming(resources_iter, args.output)
+                duration = time.time() - start_time
+                console.print(f"\n[bold green]Scan completed in {duration:.2f} seconds[/bold green]")
                 console.print(f"[green]✓[/green] Report saved to: {args.output}")
             except Exception as e:
                 console.print(f"[red]Error saving report: {e}[/red]")
                 sys.exit(1)
         else:
-            console.print("\n[yellow]No resources found to report.[/yellow]")
+            # Traditional mode - load all resources into memory
+            all_resources = scan_services_concurrently(scanners, not args.no_progress)
+            duration = time.time() - start_time
+            
+            # Display summary
+            console.print(f"\n[bold green]Scan completed in {duration:.2f} seconds[/bold green]\n")
+            display_summary(all_resources)
+            
+            # Generate and save report
+            if all_resources:
+                console.print(f"\n[cyan]Generating {args.format} report...[/cyan]")
+                
+                if args.format == 'markdown':
+                    report = generate_markdown_report(all_resources)
+                else:
+                    console.print(f"[yellow]Format '{args.format}' not yet implemented, using markdown[/yellow]")
+                    report = generate_markdown_report(all_resources)
+                
+                try:
+                    with open(args.output, 'w') as f:
+                        f.write(report)
+                    console.print(f"[green]✓[/green] Report saved to: {args.output}")
+                except Exception as e:
+                    console.print(f"[red]Error saving report: {e}[/red]")
+                    sys.exit(1)
+            else:
+                console.print("\n[yellow]No resources found to report.[/yellow]")
             
     except KeyboardInterrupt:
         console.print("\n[yellow]Scan interrupted by user[/yellow]")

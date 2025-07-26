@@ -4,8 +4,8 @@ from unittest.mock import Mock, patch, MagicMock
 from concurrent.futures import Future
 from typing import List
 
-from aws_scanner.scanners.base_scanner import BaseScanner, ScanResult
-from aws_scanner.types import Resource
+from aws_scanner.scanners.base_scanner import BaseScanner
+from aws_scanner.types import Resource, RegionScanResult
 
 
 class TestScanner(BaseScanner):

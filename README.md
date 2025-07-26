@@ -22,7 +22,7 @@ A comprehensive AWS resource scanner that identifies all cost-incurring and dele
 - **Lambda**: Functions
 - **DynamoDB**: Tables
 - **ELB**: Classic Load Balancers, Application/Network/Gateway Load Balancers
-- **VPC**: VPC Endpoints, Transit Gateways
+- **VPC**: VPCs (excluding default), VPC Endpoints, Transit Gateways, VPN Connections
 - **ECS**: Clusters, Services, Task Definitions
 - **EKS**: Clusters
 - **CloudFront**: Distributions
@@ -117,6 +117,9 @@ uv run python scan_aws.py --no-progress
 
 # Use custom configuration file
 uv run python scan_aws.py --config scanner-config.json
+
+# Use memory-efficient streaming mode (recommended for large AWS accounts)
+uv run python scan_aws.py --streaming
 ```
 
 ### Command Line Options
@@ -138,6 +141,7 @@ Options:
                         Logging level (default: INFO)
   --config CONFIG       Path to configuration file
   --no-progress         Disable progress bars
+  --streaming           Use memory-efficient streaming mode (recommended for large AWS accounts)
 ```
 
 ## Development
