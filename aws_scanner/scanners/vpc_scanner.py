@@ -14,6 +14,9 @@ class VPCScanner(BaseScanner):
         ec2_client = boto3.client('ec2', region_name=region)
         resources: List[Resource] = []
         
+        # Scan VPCs (excluding default VPCs)
+        self._scan_vpcs(ec2_client, region, resources)
+        
         # Scan Transit Gateways
         self._scan_transit_gateways(ec2_client, region, resources)
         
@@ -30,6 +33,37 @@ class VPCScanner(BaseScanner):
         self._scan_direct_connect(region, resources)
         
         return resources
+    
+    def _scan_vpcs(self, client, region: str, resources: List[Resource]) -> None:
+        try:
+            paginator = client.get_paginator('describe_vpcs')
+            
+            for page in paginator.paginate():
+                for vpc in page.get('Vpcs', []):
+                    # Skip default VPCs
+                    if vpc.get('IsDefault', False):
+                        continue
+                        
+                    tags = {tag['Key']: tag['Value'] for tag in vpc.get('Tags', [])}
+                    
+                    resources.append(Resource(
+                        id=vpc.get('VpcId', 'Unknown'),
+                        type='VPC',
+                        service='VPC',
+                        name=tags.get('Name', vpc.get('VpcId')),
+                        region=region,
+                        state=vpc.get('State'),
+                        estimated_monthly_cost=0,  # VPCs themselves are free
+                        additional_info={
+                            'cidrBlock': vpc.get('CidrBlock'),
+                            'isDefault': vpc.get('IsDefault'),
+                            'enableDnsHostnames': vpc.get('EnableDnsHostnames'),
+                            'enableDnsSupport': vpc.get('EnableDnsSupport'),
+                            'tags': tags
+                        }
+                    ))
+        except Exception as e:
+            self.handle_error(e, 'VPCs')
     
     def _scan_transit_gateways(self, client, region: str, resources: List[Resource]) -> None:
         try:
