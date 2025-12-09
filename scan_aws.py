@@ -500,28 +500,35 @@ def display_summary(resources: List[Resource]) -> None:
     if not resources:
         console.print("[yellow]No resources found.[/yellow]")
         return
-    
+
     # Create summary table
     table = Table(title="AWS Resources Summary", show_header=True, header_style="bold magenta")
     table.add_column("Service", style="cyan", no_wrap=True)
+    table.add_column("Type", style="magenta", no_wrap=True)
+    table.add_column("Region", style="blue", no_wrap=True)
     table.add_column("Count", justify="right", style="green")
     table.add_column("Monthly Cost", justify="right", style="yellow")
-    
-    # Group by service
-    by_service = defaultdict(list)
+
+    # Group by service, type, and region
+    by_service_type_region = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for resource in resources:
-        by_service[resource.service].append(resource)
-    
+        by_service_type_region[resource.service][resource.type][resource.region].append(resource)
+
     total_cost = 0
-    for service, service_resources in sorted(by_service.items()):
-        count = len(service_resources)
-        cost = sum(r.estimated_monthly_cost or 0 for r in service_resources)
-        total_cost += cost
-        table.add_row(service, str(count), f"${cost:,.2f}")
-    
+    for service in sorted(by_service_type_region.keys()):
+        types = by_service_type_region[service]
+        for resource_type in sorted(types.keys()):
+            regions = types[resource_type]
+            for region in sorted(regions.keys()):
+                region_resources = regions[region]
+                count = len(region_resources)
+                cost = sum(r.estimated_monthly_cost or 0 for r in region_resources)
+                total_cost += cost
+                table.add_row(service, resource_type, region, str(count), f"${cost:,.2f}")
+
     table.add_section()
-    table.add_row("TOTAL", str(len(resources)), f"${total_cost:,.2f}", style="bold")
-    
+    table.add_row("TOTAL", "", "", str(len(resources)), f"${total_cost:,.2f}", style="bold")
+
     console.print(table)
 
 
