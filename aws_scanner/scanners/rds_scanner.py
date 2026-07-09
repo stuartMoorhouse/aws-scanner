@@ -1,4 +1,3 @@
-import boto3
 from typing import List
 from .base_scanner import BaseScanner
 from ..types import Resource
@@ -10,7 +9,7 @@ class RDSScanner(BaseScanner):
         return 'RDS'
     
     def scan_single_region(self, region: str) -> List[Resource]:
-        client = boto3.client('rds', region_name=region)
+        client = self.session.client('rds', region_name=region)
         resources: List[Resource] = []
         
         # Scan DB Instances

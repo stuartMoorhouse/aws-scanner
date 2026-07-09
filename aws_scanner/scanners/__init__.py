@@ -10,6 +10,10 @@ from .cloudfront_scanner import CloudFrontScanner
 from .route53_scanner import Route53Scanner
 from .vpc_scanner import VPCScanner
 from .apigateway_scanner import APIGatewayScanner
+from .kms_scanner import KMSScanner
+from .secretsmanager_scanner import SecretsManagerScanner
+from .guardduty_scanner import GuardDutyScanner
+from .cloudtrail_scanner import CloudTrailScanner
 
 __all__ = [
     'EC2Scanner',
@@ -23,5 +27,9 @@ __all__ = [
     'CloudFrontScanner',
     'Route53Scanner',
     'VPCScanner',
-    'APIGatewayScanner'
+    'APIGatewayScanner',
+    'KMSScanner',
+    'SecretsManagerScanner',
+    'GuardDutyScanner',
+    'CloudTrailScanner',
 ]

@@ -1,5 +1,4 @@
 """S3 bucket scanner."""
-import boto3
 from typing import List, Dict, Any
 from botocore.exceptions import ClientError
 import logging
@@ -7,7 +6,7 @@ import logging
 from .base_scanner import BaseScanner
 from ..types import Resource
 from ..utils import retry_with_backoff, handle_aws_error, AWSAccessDeniedError
-from ..type_defs import S3BucketInfo, BotoClient
+from ..types import S3BucketInfo, BotoClient
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,7 @@ class S3Scanner(BaseScanner):
         if region != 'us-east-1':
             return []
         
-        client = boto3.client('s3', region_name=region)
+        client = self.session.client('s3', region_name=region)
         resources: List[Resource] = []
         
         try:
@@ -99,7 +98,7 @@ class S3Scanner(BaseScanner):
         try:
             location_response = client.get_bucket_location(Bucket=bucket_name)
             location = location_response.get('LocationConstraint') or 'us-east-1'
-            regional_client = boto3.client('s3', region_name=location)
+            regional_client = self.session.client('s3', region_name=location)
         except Exception:
             regional_client = client
             location = 'unknown'

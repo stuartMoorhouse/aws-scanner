@@ -2,27 +2,6 @@
 """AWS Resource Scanner - Main entry point."""
 import os
 import sys
-
-# Validate AWS credentials before any other imports
-def validate_aws_credentials():
-    """Validate AWS credentials are available before proceeding."""
-    # Check environment variables first
-    if not (os.environ.get('AWS_ACCESS_KEY_ID') or os.environ.get('AWS_SECRET_ACCESS_KEY')):
-        # Try to get credentials from boto3's credential chain
-        try:
-            import boto3
-            session = boto3.Session()
-            credentials = session.get_credentials()
-            if not credentials:
-                print("Error: No AWS credentials found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or configure AWS credentials.")
-                sys.exit(1)
-        except Exception as e:
-            print(f"Error: Failed to validate AWS credentials: {e}")
-            sys.exit(1)
-
-# Validate credentials before proceeding with imports
-validate_aws_credentials()
-
 import time
 import argparse
 from datetime import datetime
@@ -41,6 +20,12 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRe
 from aws_scanner.types import Resource, ServiceSummary
 from aws_scanner.logger import setup_logging, get_logger
 from aws_scanner.config import get_config
+from aws_scanner.session import (
+    build_session,
+    describe_identity,
+    list_profiles,
+    prompt_for_profile,
+)
 from aws_scanner.utils import retry_with_backoff
 from aws_scanner.scanners import (
     EC2Scanner,
@@ -54,7 +39,11 @@ from aws_scanner.scanners import (
     CloudFrontScanner,
     Route53Scanner,
     VPCScanner,
-    APIGatewayScanner
+    APIGatewayScanner,
+    KMSScanner,
+    SecretsManagerScanner,
+    GuardDutyScanner,
+    CloudTrailScanner,
 )
 from aws_scanner.scanners.base_scanner import BaseScanner
 
@@ -128,23 +117,62 @@ Examples:
         action='store_true',
         help='Use memory-efficient streaming mode (recommended for large AWS accounts)'
     )
-    
-    return parser.parse_args()
+    profile_group = parser.add_mutually_exclusive_group()
+    profile_group.add_argument(
+        '--profile',
+        help='AWS profile to use (from ~/.aws/config). '
+             'If omitted, you will be prompted to pick one interactively.'
+    )
+
+    # One shortcut flag per discovered profile, e.g. --personal, --company.
+    existing_dests = {action.dest for action in parser._actions}
+    for name in list_profiles():
+        flag = f'--{name}'
+        dest = f'profile_shortcut_{name}'
+        if name in existing_dests or dest in existing_dests:
+            continue
+        profile_group.add_argument(
+            flag,
+            dest=dest,
+            action='store_const',
+            const=name,
+            help=f"Shortcut for --profile {name}"
+        )
+
+    parser.add_argument(
+        '--list-profiles',
+        action='store_true',
+        help='List available AWS profiles and exit.'
+    )
+
+    args = parser.parse_args()
+
+    # Collapse any --<profile> shortcut into args.profile
+    if not args.profile:
+        for key, value in vars(args).items():
+            if key.startswith('profile_shortcut_') and value:
+                args.profile = value
+                break
+
+    return args
 
 
 @retry_with_backoff()
-def get_all_regions() -> List[str]:
+def get_all_regions(session: boto3.Session) -> List[str]:
     """
-    Get all available AWS regions.
-    
+    Get all available AWS regions using the given session.
+
+    Args:
+        session: boto3 Session (carries profile/creds)
+
     Returns:
         List of region names
-        
+
     Raises:
         Exception: If unable to fetch regions
     """
     try:
-        client = boto3.client('ec2', region_name='us-east-1')
+        client = session.client('ec2', region_name='us-east-1')
         response = client.describe_regions()
         return sorted([region['RegionName'] for region in response['Regions']])
     except Exception as e:
@@ -535,13 +563,29 @@ def display_summary(resources: List[Resource]) -> None:
 def main():
     """Main entry point."""
     args = parse_arguments()
-    
+
+    # --list-profiles short-circuit
+    if args.list_profiles:
+        profiles = list_profiles()
+        if not profiles:
+            console.print("[yellow]No AWS profiles configured.[/yellow]")
+            sys.exit(0)
+        console.print("[bold cyan]Available AWS profiles:[/bold cyan]")
+        for name in profiles:
+            console.print(f"  - {name}")
+        sys.exit(0)
+
+    # Resolve which AWS profile to use
+    profile = args.profile
+    if not profile:
+        profile = prompt_for_profile()
+
     # Set up configuration
     if args.config:
         os.environ['AWS_SCANNER_CONFIG'] = args.config
-    
+
     config = get_config()
-    
+
     # Override config with command line args
     if args.regions:
         config.only_regions = args.regions
@@ -551,35 +595,46 @@ def main():
         config.only_services = args.services
     if args.skip_services:
         config.skip_services = args.skip_services
-    
+
     # Set up logging
     setup_logging(args.log_level, config.log_format)
-    
+
     console.print("[bold cyan]AWS Resource Scanner[/bold cyan]")
     console.print("=" * 50)
-    
-    console.print("[green]✓[/green] AWS credentials validated")
-    
+
+    # Build session and confirm identity
+    session = build_session(profile)
+    identity = describe_identity(session)
+    console.print(
+        f"[green]✓[/green] Using profile [bold]{profile}[/bold] — "
+        f"account [bold]{identity['Account']}[/bold] "
+        f"as [bold]{identity['Arn']}[/bold]"
+    )
+
     try:
         # Get all regions
         console.print("\n[cyan]Fetching AWS regions...[/cyan]")
-        regions = get_all_regions()
+        regions = get_all_regions(session)
         console.print(f"[green]✓[/green] Found {len(regions)} regions")
-        
+
         # Initialize scanners
         all_scanners = [
-            EC2Scanner(regions),
-            S3Scanner(regions),
-            RDSScanner(regions),
-            LambdaScanner(regions),
-            DynamoDBScanner(regions),
-            ELBScanner(regions),
-            ECSScanner(regions),
-            EKSScanner(regions),
-            CloudFrontScanner(regions),
-            Route53Scanner(regions),
-            VPCScanner(regions),
-            APIGatewayScanner(regions)
+            EC2Scanner(regions, session),
+            S3Scanner(regions, session),
+            RDSScanner(regions, session),
+            LambdaScanner(regions, session),
+            DynamoDBScanner(regions, session),
+            ELBScanner(regions, session),
+            ECSScanner(regions, session),
+            EKSScanner(regions, session),
+            CloudFrontScanner(regions, session),
+            Route53Scanner(regions, session),
+            VPCScanner(regions, session),
+            APIGatewayScanner(regions, session),
+            KMSScanner(regions, session),
+            SecretsManagerScanner(regions, session),
+            GuardDutyScanner(regions, session),
+            CloudTrailScanner(regions, session),
         ]
         
         # Filter scanners based on config

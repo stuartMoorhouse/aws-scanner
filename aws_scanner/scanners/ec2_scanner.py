@@ -1,5 +1,4 @@
 """EC2 resource scanner."""
-import boto3
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from botocore.exceptions import ClientError
@@ -9,7 +8,7 @@ from .base_scanner import BaseScanner
 from ..types import Resource
 from ..config import get_instance_cost, get_ebs_cost, ELASTIC_IP_PRICING, NAT_GATEWAY_PRICING, SNAPSHOT_PRICING
 from ..utils import retry_with_backoff, handle_aws_error, AWSAccessDeniedError
-from ..type_defs import EC2InstanceInfo, EBSVolumeInfo, BotoClient
+from ..types import EC2InstanceInfo, EBSVolumeInfo, BotoClient
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +31,7 @@ class EC2Scanner(BaseScanner):
         Returns:
             List of EC2 resources found
         """
-        client = boto3.client('ec2', region_name=region)
+        client = self.session.client('ec2', region_name=region)
         resources: List[Resource] = []
         
         # Scan different EC2 resource types
@@ -158,7 +157,7 @@ class EC2Scanner(BaseScanner):
         """Scan EBS snapshots."""
         try:
             # Get account ID
-            account_id = boto3.client('sts').get_caller_identity()['Account']
+            account_id = self.session.client('sts').get_caller_identity()['Account']
             
             paginator = client.get_paginator('describe_snapshots')
             

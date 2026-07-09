@@ -1,5 +1,4 @@
 """Lambda function scanner."""
-import boto3
 from typing import List, Dict, Any
 from datetime import datetime
 from botocore.exceptions import ClientError
@@ -8,7 +7,7 @@ import logging
 from .base_scanner import BaseScanner
 from ..types import Resource
 from ..utils import retry_with_backoff, handle_aws_error, AWSAccessDeniedError
-from ..type_defs import LambdaFunctionInfo, BotoClient
+from ..types import LambdaFunctionInfo, BotoClient
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,7 @@ class LambdaScanner(BaseScanner):
         Returns:
             List of Lambda function resources
         """
-        client = boto3.client('lambda', region_name=region)
+        client = self.session.client('lambda', region_name=region)
         resources: List[Resource] = []
         
         try:

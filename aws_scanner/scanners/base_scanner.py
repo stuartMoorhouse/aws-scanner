@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import logging
 
-from ..types import Resource, RegionScanResult
+import boto3
+
+from ..types import Resource, RegionScanResult, ScanResult
 from ..config import get_config
 from ..utils import handle_aws_error, RateLimiter
 
@@ -14,15 +16,17 @@ logger = logging.getLogger(__name__)
 
 class BaseScanner(ABC):
     """Base class for AWS service scanners."""
-    
-    def __init__(self, regions: List[str]):
+
+    def __init__(self, regions: List[str], session: boto3.Session):
         """
         Initialize scanner.
-        
+
         Args:
             regions: List of AWS regions to scan
+            session: boto3 Session used for all AWS API calls (carries profile/creds)
         """
         self.regions = regions
+        self.session = session
         self.config = get_config()
         self.rate_limiter = RateLimiter(self.config.requests_per_second)
         

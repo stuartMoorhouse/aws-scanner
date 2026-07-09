@@ -28,15 +28,20 @@ A comprehensive AWS resource scanner that identifies all cost-incurring and dele
 - **CloudFront**: Distributions
 - **Route53**: Hosted Zones
 - **API Gateway**: REST APIs, HTTP APIs
+- **KMS**: Customer-managed CMKs ($1/mo each — AWS-managed keys are free and skipped)
+- **Secrets Manager**: Secrets ($0.40/mo each)
+- **GuardDuty**: Detectors and enabled features (usage-based, no fixed estimate)
+- **CloudTrail**: Trails, delivery status, and whether the destination S3 bucket still exists
 
 ## Prerequisites
 
 - Python 3.8+
 - [uv](https://github.com/astral-sh/uv) - Fast Python package manager
-- AWS credentials configured as environment variables:
-  - `AWS_ACCESS_KEY_ID`
-  - `AWS_SECRET_ACCESS_KEY`
-  - Optional: `AWS_SESSION_TOKEN` (for temporary credentials)
+- AWS credentials configured in one of:
+  - Named profiles in `~/.aws/config` / `~/.aws/credentials` (recommended — makes
+    switching between orgs a one-flag change)
+  - Environment variables `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+    (optionally `AWS_SESSION_TOKEN` for temporary credentials)
 
 ## Installation
 
@@ -72,29 +77,44 @@ uv pip sync pyproject.toml
 
 ## Usage
 
-### Step 1: Set AWS credentials
+### Step 1: Configure AWS profiles (one-time)
+
+If you scan more than one AWS organization, set up a named profile for each
+using the AWS CLI:
 
 ```bash
-# Option 1: Use environment variables
-export AWS_ACCESS_KEY_ID=your_access_key
-export AWS_SECRET_ACCESS_KEY=your_secret_key
+aws configure --profile work
+aws configure --profile personal
+```
 
-# Option 2: Use AWS profile
-export AWS_PROFILE=your-profile-name
+This writes to `~/.aws/config` and `~/.aws/credentials`. List what's configured with:
+
+```bash
+uv run python scan_aws.py --list-profiles
 ```
 
 ### Step 2: Run the scanner
 
 ```bash
-# Option 1: Use the provided script (recommended)
-./run_scanner.sh
-
-# Option 2: Run directly with uv
+# Interactive: pick a profile from a menu
 uv run python scan_aws.py
 
-# Option 3: If you need to specify options
-uv run python scan_aws.py --regions us-east-1 us-west-2 --output my-report.md
+# Non-interactive: pass the profile directly
+uv run python scan_aws.py --profile work
+uv run python scan_aws.py --profile personal --regions us-east-1
+
+# Shortcut: every profile in ~/.aws/config gets its own --<name> flag
+uv run python scan_aws.py --personal
+uv run python scan_aws.py --company --regions eu-north-1
 ```
+
+On startup the scanner prints the resolved account ID and IAM ARN so you can
+visually confirm which organization is being scanned before it does anything.
+
+**Note on environment variables:** if `AWS_ACCESS_KEY_ID` is set in your shell,
+boto3 normally uses it in preference to any profile. When you pass `--profile`,
+the scanner automatically unsets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+and `AWS_SESSION_TOKEN` in-process so the profile actually takes effect.
 
 ### Step 3: Review the report
 
@@ -142,6 +162,9 @@ Options:
   --config CONFIG       Path to configuration file
   --no-progress         Disable progress bars
   --streaming           Use memory-efficient streaming mode (recommended for large AWS accounts)
+  --profile PROFILE     AWS profile to use (from ~/.aws/config). If omitted, you will be
+                        prompted to pick one interactively.
+  --list-profiles       List available AWS profiles and exit.
 ```
 
 ## Development

@@ -1,4 +1,3 @@
-import boto3
 from typing import List
 from .base_scanner import BaseScanner
 from ..types import Resource
@@ -11,7 +10,7 @@ class EKSScanner(BaseScanner):
     
     
     def scan_single_region(self, region: str) -> List[Resource]:
-        client = boto3.client('eks', region_name=region)
+        client = self.session.client('eks', region_name=region)
         resources: List[Resource] = []
         
         try:

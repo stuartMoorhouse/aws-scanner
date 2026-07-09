@@ -1,4 +1,3 @@
-import boto3
 from typing import List
 from .base_scanner import BaseScanner
 from ..types import Resource
@@ -17,7 +16,7 @@ class Route53Scanner(BaseScanner):
         if region != 'us-east-1':
             return resources
         
-        client = boto3.client('route53', region_name=region)
+        client = self.session.client('route53', region_name=region)
         
         # Scan Hosted Zones
         self._scan_hosted_zones(client, resources)

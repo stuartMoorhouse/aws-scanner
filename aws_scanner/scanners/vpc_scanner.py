@@ -1,4 +1,3 @@
-import boto3
 from typing import List
 from .base_scanner import BaseScanner
 from ..types import Resource
@@ -11,7 +10,7 @@ class VPCScanner(BaseScanner):
     
     
     def scan_single_region(self, region: str) -> List[Resource]:
-        ec2_client = boto3.client('ec2', region_name=region)
+        ec2_client = self.session.client('ec2', region_name=region)
         resources: List[Resource] = []
         
         # Scan VPCs (excluding default VPCs)
@@ -209,7 +208,7 @@ class VPCScanner(BaseScanner):
     
     def _scan_direct_connect(self, region: str, resources: List[Resource]) -> None:
         try:
-            dx_client = boto3.client('directconnect', region_name=region)
+            dx_client = self.session.client('directconnect', region_name=region)
             
             # Virtual Interfaces
             response = dx_client.describe_virtual_interfaces()

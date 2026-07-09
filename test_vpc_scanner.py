@@ -116,7 +116,7 @@ def main():
         console.print(f"[green]✓[/green] Found {len(regions)} regions\n")
         
         # Create VPC scanner
-        scanner = VPCScanner(regions)
+        scanner = VPCScanner(regions, boto3.Session())
         
         # Scan all regions
         console.print("[cyan]Scanning VPC resources across all regions...[/cyan]")

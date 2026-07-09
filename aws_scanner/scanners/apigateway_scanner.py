@@ -1,4 +1,3 @@
-import boto3
 from typing import List
 from .base_scanner import BaseScanner
 from ..types import Resource
@@ -22,7 +21,7 @@ class APIGatewayScanner(BaseScanner):
         return resources
     
     def _scan_rest_apis(self, region: str, resources: List[Resource]) -> None:
-        client = boto3.client('apigateway', region_name=region)
+        client = self.session.client('apigateway', region_name=region)
         
         try:
             paginator = client.get_paginator('get_rest_apis')
@@ -91,7 +90,7 @@ class APIGatewayScanner(BaseScanner):
             self.handle_error(e, 'REST APIs')
     
     def _scan_http_apis(self, region: str, resources: List[Resource]) -> None:
-        client = boto3.client('apigatewayv2', region_name=region)
+        client = self.session.client('apigatewayv2', region_name=region)
         
         try:
             paginator = client.get_paginator('get_apis')

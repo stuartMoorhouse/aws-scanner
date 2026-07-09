@@ -1,4 +1,3 @@
-import boto3
 from typing import List
 from .base_scanner import BaseScanner
 from ..types import Resource
@@ -17,7 +16,7 @@ class CloudFrontScanner(BaseScanner):
         if region != 'us-east-1':
             return resources
         
-        client = boto3.client('cloudfront', region_name=region)
+        client = self.session.client('cloudfront', region_name=region)
         
         try:
             paginator = client.get_paginator('list_distributions')

@@ -1,4 +1,3 @@
-import boto3
 from typing import List
 from .base_scanner import BaseScanner
 from ..types import Resource
@@ -22,7 +21,7 @@ class ELBScanner(BaseScanner):
         return resources
     
     def _scan_classic_load_balancers(self, region: str, resources: List[Resource]) -> None:
-        client = boto3.client('elb', region_name=region)
+        client = self.session.client('elb', region_name=region)
         
         try:
             paginator = client.get_paginator('describe_load_balancers')
@@ -53,7 +52,7 @@ class ELBScanner(BaseScanner):
             self.handle_error(e, 'Classic Load Balancers')
     
     def _scan_v2_load_balancers(self, region: str, resources: List[Resource]) -> None:
-        client = boto3.client('elbv2', region_name=region)
+        client = self.session.client('elbv2', region_name=region)
         
         try:
             paginator = client.get_paginator('describe_load_balancers')
